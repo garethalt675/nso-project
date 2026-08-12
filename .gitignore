@@ -1,0 +1,36 @@
+# Credentials - never commit these
+dbx config.txt
+.databrickscfg
+.env
+.env.*
+!.env.example
+secrets.json
+*.pem
+*.key
+
+# Local tool override files may contain raw Databricks tokens.
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Source workbooks and scratch data (these live in Unity Catalog volumes)
+data/
+*.pdf
+*.xlsx
+*.xls
+*.csv
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

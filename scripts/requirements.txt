@@ -1,0 +1,4 @@
+# Local tooling only. The notebooks themselves run on Databricks serverless and
+# need nothing from here.
+databricks-sdk>=0.120.0
+requests>=2.31.0

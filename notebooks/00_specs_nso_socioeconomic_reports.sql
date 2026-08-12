@@ -1,0 +1,574 @@
+﻿-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # NSO Socio-Economic Reports Workflow Spec
+-- MAGIC 
+-- MAGIC ## Context
+-- MAGIC 
+-- MAGIC Build a Databricks workflow to crawl, download, parse, extract, and curate Vietnam NSO / GSO monthly socio-economic reports from:
+-- MAGIC 
+-- MAGIC - `https://www.nso.gov.vn/bao-cao-tinh-hinh-kinh-te-xa-hoi-hang-thang/`
+-- MAGIC 
+-- MAGIC The NSO archive currently exposes historical report pages back to around 2000. Each report page generally contains:
+-- MAGIC 
+-- MAGIC - HTML article text
+-- MAGIC - metadata such as title, published date, reference period, next release date
+-- MAGIC - attached narrative document, usually `.docx`
+-- MAGIC - attached statistical table workbook, usually `.xlsx`
+-- MAGIC 
+-- MAGIC The preferred structured source is the attached `.xlsx` tables. HTML and `.docx` should be retained for narrative indicators, source traceability, and possible future NLP extraction.
+-- MAGIC 
+-- MAGIC This workflow should follow the existing Databricks pattern already used in `market_data.vama`:
+-- MAGIC 
+-- MAGIC 1. crawl/download documents
+-- MAGIC 2. parse documents
+-- MAGIC 3. extract tables
+-- MAGIC 4. optionally build curated BI-friendly outputs, similar to the `market_data.customs` Stage 4 pattern
+-- MAGIC 
+-- MAGIC ## Target Databricks Location
+-- MAGIC 
+-- MAGIC Workspace folder:
+-- MAGIC 
+-- MAGIC - `/Users/tuckeyhue@gmail.com/Market Research/1. Data ETL/3. NSO`
+-- MAGIC 
+-- MAGIC Recommended notebooks:
+-- MAGIC 
+-- MAGIC 1. `00_specs_nso_socioeconomic_reports`
+-- MAGIC 2. `1_Crawl_Download_Documents`
+-- MAGIC 3. `2_Parse_Documents`
+-- MAGIC 4. `3_Extract_Tables`
+-- MAGIC 5. `4_Curated`
+-- MAGIC 
+-- MAGIC Unity Catalog:
+-- MAGIC 
+-- MAGIC - catalog: `market_data`
+-- MAGIC - schema: `nso`
+-- MAGIC - volume: `download_docs`
+-- MAGIC 
+-- MAGIC Volume path:
+-- MAGIC 
+-- MAGIC - `/Volumes/market_data/nso/download_docs/`
+-- MAGIC 
+-- MAGIC ## Design Goals
+-- MAGIC 
+-- MAGIC - Extract all useful data, but systematically.
+-- MAGIC - Preserve raw files and raw extracted sheets before forcing structure.
+-- MAGIC - Classify every report into a stable `sub_category`.
+-- MAGIC - Classify each extracted table/sheet into a stable `table_category` / `indicator_domain`.
+-- MAGIC - Separate source discovery, file download, workbook parsing, table normalization, and curated BI views.
+-- MAGIC - Never overwrite raw extraction with cleaned/translated labels; do cleaning in curated/mapping layers.
+-- MAGIC - Make reruns idempotent using deterministic IDs and Delta `MERGE`.
+-- MAGIC - Keep lineage from every row back to source report, attachment, workbook sheet, row, and cell where possible.
+-- MAGIC 
+-- MAGIC ## Core Report Classification
+-- MAGIC 
+-- MAGIC Use `category = 'socio_economic_report'` for this NSO archive.
+-- MAGIC 
+-- MAGIC Use `sub_category` to classify the report release type / reference period.
+-- MAGIC 
+-- MAGIC Recommended `sub_category` values:
+-- MAGIC 
+-- MAGIC | sub_category | Meaning | Detection examples |
+-- MAGIC |---|---|---|
+-- MAGIC | `monthly_single_month` | A report for only one month, usually early-year months where no cumulative phrase is present | `thÃ¡ng Má»™t nÄƒm 2026`, `thÃ¡ng Hai nÄƒm 2026` |
+-- MAGIC | `monthly_cumulative` | Monthly report that includes month + cumulative year-to-date period | `thÃ¡ng TÆ° vÃ  4 thÃ¡ng Ä‘áº§u nÄƒm 2026`, `thÃ¡ng MÆ°á»i Má»™t vÃ  11 thÃ¡ng nÄƒm 2025` |
+-- MAGIC | `quarterly` | A quarterly report without full-year summary | `quÃ½ I nÄƒm 2026`, `quÃ½ III vÃ  9 thÃ¡ng nÄƒm 2025` |
+-- MAGIC | `semi_annual` | Half-year / six-month report | `quÃ½ II vÃ  6 thÃ¡ng`, `6 thÃ¡ng Ä‘áº§u nÄƒm` |
+-- MAGIC | `annual` | Full-year report, usually released with Q4 | `quÃ½ IV vÃ  nÄƒm 2025`, `nÄƒm 2025` |
+-- MAGIC | `special_or_unknown` | Any title that cannot be confidently mapped | fallback |
+-- MAGIC 
+-- MAGIC Also keep raw values:
+-- MAGIC 
+-- MAGIC - `title_raw`
+-- MAGIC - `sub_category_raw`
+-- MAGIC - `period_phrase_raw`
+-- MAGIC 
+-- MAGIC Recommended period fields:
+-- MAGIC 
+-- MAGIC - `report_year INT`
+-- MAGIC - `report_month INT` nullable
+-- MAGIC - `report_quarter INT` nullable
+-- MAGIC - `period_months_covered INT` nullable, e.g. 4 for `4 thÃ¡ng Ä‘áº§u nÄƒm`, 12 for annual
+-- MAGIC - `period_type STRING`: `monthly`, `quarterly`, `semi_annual`, `annual`, `unknown`
+-- MAGIC - `period_start_date DATE`
+-- MAGIC - `period_end_date DATE`
+-- MAGIC - `reference_period_raw STRING`
+-- MAGIC - `published_date DATE`
+-- MAGIC - `next_release_date DATE`
+-- MAGIC 
+-- MAGIC Important: `sub_category` here describes the report release type, not the economic subject. Economic subjects belong in table/indicator classifications.
+-- MAGIC 
+-- MAGIC ## Table / Indicator Classification
+-- MAGIC 
+-- MAGIC Each `.xlsx` workbook can contain many sheets/tables. Do not put all extracted values into one unlabeled bucket. Assign table-level classifications.
+-- MAGIC 
+-- MAGIC Recommended `indicator_domain` values:
+-- MAGIC 
+-- MAGIC 1. `national_accounts`
+-- MAGIC    - GDP, GRDP where present, economic growth, production structure
+-- MAGIC 2. `state_budget_finance_banking_insurance`
+-- MAGIC    - state budget revenue/expenditure, credit, interest, insurance
+-- MAGIC 3. `agriculture_forestry_fishery`
+-- MAGIC    - crops, livestock, forestry, aquaculture, fishery output
+-- MAGIC 4. `industry`
+-- MAGIC    - industrial production index, manufacturing, mining, utilities
+-- MAGIC 5. `investment_construction`
+-- MAGIC    - realized social investment, FDI registration/disbursement, construction
+-- MAGIC 6. `enterprise_business_registration`
+-- MAGIC    - new enterprises, resumed operations, dissolved/suspended businesses
+-- MAGIC 7. `retail_services_tourism`
+-- MAGIC    - retail sales, services, accommodation, food, tourism, visitors
+-- MAGIC 8. `trade_prices`
+-- MAGIC    - exports/imports, trade balance, CPI, PPI, price indexes
+-- MAGIC 9. `transport_post_telecom`
+-- MAGIC    - passengers, freight, postal/telecommunication indicators
+-- MAGIC 10. `population_labor_social`
+-- MAGIC    - population, labor, employment, living standards, social issues
+-- MAGIC 11. `education_health_culture_sport`
+-- MAGIC    - education, healthcare, culture, sport indicators
+-- MAGIC 12. `environment_safety_disaster`
+-- MAGIC    - environment, natural disasters, traffic accidents, fire/explosion
+-- MAGIC 13. `administrative_land_climate`
+-- MAGIC    - administrative units, land, climate where present
+-- MAGIC 14. `other_or_unknown`
+-- MAGIC    - fallback pending review
+-- MAGIC 
+-- MAGIC Recommended sheet/table classification fields:
+-- MAGIC 
+-- MAGIC - `sheet_name_raw`
+-- MAGIC - `sheet_name_normalized`
+-- MAGIC - `table_title_raw`
+-- MAGIC - `table_category` â€” broad table type, e.g. `indicator_table`, `ranking_table`, `appendix`, `metadata`, `unknown`
+-- MAGIC - `indicator_domain`
+-- MAGIC - `indicator_subdomain` â€” optional more granular label
+-- MAGIC - `classification_method` â€” `rule`, `manual`, `llm_reviewed`, `fallback`
+-- MAGIC - `classification_confidence DOUBLE`
+-- MAGIC - `needs_review BOOLEAN`
+-- MAGIC 
+-- MAGIC Initial classification should be rule-based from sheet name, table title, and header keywords. Low-confidence cases should be flagged for review instead of silently merged.
+-- MAGIC 
+-- MAGIC ## Stage 1: Crawl and Download Documents
+-- MAGIC 
+-- MAGIC Notebook: `1_Crawl_Download_Documents`
+-- MAGIC 
+-- MAGIC ### Inputs
+-- MAGIC 
+-- MAGIC - Archive URL: `https://www.nso.gov.vn/bao-cao-tinh-hinh-kinh-te-xa-hoi-hang-thang/`
+-- MAGIC - Pagination: `?paged=N`, continue until no new reports or max page limit.
+-- MAGIC 
+-- MAGIC ### Outputs
+-- MAGIC 
+-- MAGIC 1. `market_data.nso.nso_reports_url`
+-- MAGIC 
+-- MAGIC Suggested schema:
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.nso_reports_url (
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   report_url STRING NOT NULL,
+-- MAGIC   title_raw STRING,
+-- MAGIC   category STRING,
+-- MAGIC   sub_category STRING,
+-- MAGIC   sub_category_raw STRING,
+-- MAGIC   period_type STRING,
+-- MAGIC   period_phrase_raw STRING,
+-- MAGIC   report_year INT,
+-- MAGIC   report_month INT,
+-- MAGIC   report_quarter INT,
+-- MAGIC   period_months_covered INT,
+-- MAGIC   period_start_date DATE,
+-- MAGIC   period_end_date DATE,
+-- MAGIC   reference_period_raw STRING,
+-- MAGIC   published_date DATE,
+-- MAGIC   next_release_date DATE,
+-- MAGIC   source_page INT,
+-- MAGIC   discovered_at TIMESTAMP,
+-- MAGIC   updated_at TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC 2. `market_data.nso.nso_report_attachments`
+-- MAGIC 
+-- MAGIC Suggested schema:
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.nso_report_attachments (
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   report_url STRING,
+-- MAGIC   attachment_url STRING NOT NULL,
+-- MAGIC   attachment_type STRING, -- html, docx, xlsx, pdf, other
+-- MAGIC   attachment_role STRING, -- narrative, statistical_tables, inline_html, unknown
+-- MAGIC   filename STRING,
+-- MAGIC   file_extension STRING,
+-- MAGIC   local_path STRING,
+-- MAGIC   file_size_bytes BIGINT,
+-- MAGIC   content_hash STRING,
+-- MAGIC   download_status STRING,
+-- MAGIC   download_timestamp TIMESTAMP,
+-- MAGIC   download_attempts INT,
+-- MAGIC   download_error_message STRING,
+-- MAGIC   created_at TIMESTAMP,
+-- MAGIC   updated_at TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC 3. `market_data.nso.document_processing_log`
+-- MAGIC 
+-- MAGIC Track download, parse, extraction, and curated status. Follow the VAMA pattern but include `report_id`, `attachment_id`, and `attachment_type`.
+-- MAGIC 
+-- MAGIC ### ID Rules
+-- MAGIC 
+-- MAGIC - `report_id = md5(report_url)[:16]`
+-- MAGIC - `attachment_id = md5(report_url || '|' || attachment_url)[:16]`
+-- MAGIC - Content hash should be full MD5/SHA256 of downloaded file when possible.
+-- MAGIC 
+-- MAGIC ### Download Layout
+-- MAGIC 
+-- MAGIC Store files by year/month/report:
+-- MAGIC 
+-- MAGIC ```text
+-- MAGIC /Volumes/market_data/nso/download_docs/report_year=2026/report_month=04/<attachment_id>__<filename>
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC For annual reports with no month, use:
+-- MAGIC 
+-- MAGIC ```text
+-- MAGIC /Volumes/market_data/nso/download_docs/report_year=2025/period_type=annual/<attachment_id>__<filename>
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ## Stage 2: Parse Documents
+-- MAGIC 
+-- MAGIC Notebook: `2_Parse_Documents`
+-- MAGIC 
+-- MAGIC ### Primary parsing path
+-- MAGIC 
+-- MAGIC - `.xlsx`: use Spark Excel library if available, or Python `openpyxl` / `pandas` in Databricks to enumerate sheets and cell ranges.
+-- MAGIC - `.docx`: use `python-docx` for narrative text and tables.
+-- MAGIC - HTML article: preserve cleaned article text and extract inline tables if present.
+-- MAGIC - PDF fallback: if future reports include PDFs, keep the parser pluggable and retain source traceability.
+-- MAGIC 
+-- MAGIC ### Outputs
+-- MAGIC 
+-- MAGIC 1. `market_data.nso.parsed_workbooks_raw`
+-- MAGIC 
+-- MAGIC One row per workbook sheet.
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.parsed_workbooks_raw (
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   report_url STRING,
+-- MAGIC   attachment_url STRING,
+-- MAGIC   filename STRING,
+-- MAGIC   sheet_index INT,
+-- MAGIC   sheet_name_raw STRING,
+-- MAGIC   sheet_name_normalized STRING,
+-- MAGIC   max_row INT,
+-- MAGIC   max_column INT,
+-- MAGIC   raw_cells_json STRING,
+-- MAGIC   parsed_timestamp TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC 2. `market_data.nso.parsed_documents_raw`
+-- MAGIC 
+-- MAGIC For HTML/docx narrative text.
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.parsed_documents_raw (
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   report_url STRING,
+-- MAGIC   attachment_url STRING,
+-- MAGIC   filename STRING,
+-- MAGIC   attachment_type STRING,
+-- MAGIC   document_text STRING,
+-- MAGIC   raw_tables_json STRING,
+-- MAGIC   parsed_timestamp TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ## Stage 3: Extract Tables
+-- MAGIC 
+-- MAGIC Notebook: `3_Extract_Tables`
+-- MAGIC 
+-- MAGIC This stage should output both a generic long table and normalized indicator tables.
+-- MAGIC 
+-- MAGIC ### Generic long output
+-- MAGIC 
+-- MAGIC `market_data.nso.extracted_cells_long`
+-- MAGIC 
+-- MAGIC Grain: one workbook cell.
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.extracted_cells_long (
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   report_url STRING,
+-- MAGIC   attachment_url STRING,
+-- MAGIC   filename STRING,
+-- MAGIC   report_year INT,
+-- MAGIC   report_month INT,
+-- MAGIC   report_quarter INT,
+-- MAGIC   period_type STRING,
+-- MAGIC   sub_category STRING,
+-- MAGIC   sheet_index INT,
+-- MAGIC   sheet_name_raw STRING,
+-- MAGIC   table_index INT,
+-- MAGIC   row_index INT,
+-- MAGIC   column_index INT,
+-- MAGIC   cell_value_raw STRING,
+-- MAGIC   cell_value_clean STRING,
+-- MAGIC   extracted_timestamp TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ### Table inventory output
+-- MAGIC 
+-- MAGIC `market_data.nso.extracted_table_inventory`
+-- MAGIC 
+-- MAGIC Grain: one detected table / sheet block.
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.extracted_table_inventory (
+-- MAGIC   table_id STRING NOT NULL,
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   sheet_index INT,
+-- MAGIC   sheet_name_raw STRING,
+-- MAGIC   table_index INT,
+-- MAGIC   table_title_raw STRING,
+-- MAGIC   table_category STRING,
+-- MAGIC   indicator_domain STRING,
+-- MAGIC   indicator_subdomain STRING,
+-- MAGIC   header_rows_json STRING,
+-- MAGIC   data_start_row INT,
+-- MAGIC   data_end_row INT,
+-- MAGIC   classification_method STRING,
+-- MAGIC   classification_confidence DOUBLE,
+-- MAGIC   needs_review BOOLEAN,
+-- MAGIC   extracted_timestamp TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ### Normalized indicator output
+-- MAGIC 
+-- MAGIC `market_data.nso.extracted_indicators_long`
+-- MAGIC 
+-- MAGIC Grain: one indicator x period x optional dimension x metric.
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.extracted_indicators_long (
+-- MAGIC   indicator_observation_id STRING NOT NULL,
+-- MAGIC   report_id STRING NOT NULL,
+-- MAGIC   attachment_id STRING NOT NULL,
+-- MAGIC   table_id STRING,
+-- MAGIC   source_row_index INT,
+-- MAGIC   source_column_index INT,
+-- MAGIC   report_year INT,
+-- MAGIC   report_month INT,
+-- MAGIC   report_quarter INT,
+-- MAGIC   period_type STRING,
+-- MAGIC   period_start_date DATE,
+-- MAGIC   period_end_date DATE,
+-- MAGIC   sub_category STRING,
+-- MAGIC   indicator_domain STRING,
+-- MAGIC   indicator_subdomain STRING,
+-- MAGIC   indicator_name_raw STRING,
+-- MAGIC   indicator_name_normalized STRING,
+-- MAGIC   geography_raw STRING,
+-- MAGIC   sector_raw STRING,
+-- MAGIC   product_raw STRING,
+-- MAGIC   unit_raw STRING,
+-- MAGIC   metric_name_raw STRING,
+-- MAGIC   metric_type STRING, -- value, mom_growth, yoy_growth, ytd_value, share, index, rank, other
+-- MAGIC   value_numeric DOUBLE,
+-- MAGIC   value_text STRING,
+-- MAGIC   currency STRING,
+-- MAGIC   scale STRING, -- unit, thousand, million, billion, trillion, percent, index
+-- MAGIC   extraction_method STRING,
+-- MAGIC   extraction_confidence DOUBLE,
+-- MAGIC   needs_review BOOLEAN,
+-- MAGIC   source_filename STRING,
+-- MAGIC   source_sheet_name STRING,
+-- MAGIC   extracted_timestamp TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ## Stage 4: Curated Layer
+-- MAGIC 
+-- MAGIC Notebook: `4_Curated`
+-- MAGIC 
+-- MAGIC Purpose: BI-friendly cleaned tables. Do not destroy or mutate raw extraction tables.
+-- MAGIC 
+-- MAGIC Recommended curated outputs:
+-- MAGIC 
+-- MAGIC 1. `market_data.nso.curated_indicators_long`
+-- MAGIC    - cleaned, standardized indicator observations
+-- MAGIC    - joins mapping dimensions for English names and normalized domains
+-- MAGIC 
+-- MAGIC 2. `market_data.nso.curated_macro_dashboard_monthly`
+-- MAGIC    - selected recurring macro indicators by period
+-- MAGIC    - one row per period, columns for headline indicators where stable
+-- MAGIC 
+-- MAGIC 3. `market_data.nso.curated_trade_indicators`
+-- MAGIC    - export/import/trade balance indicators from NSO reports
+-- MAGIC    - separate from Customs because methodology/source differs
+-- MAGIC 
+-- MAGIC 4. `market_data.nso.curated_price_indicators`
+-- MAGIC    - CPI, inflation, price indexes
+-- MAGIC 
+-- MAGIC 5. `market_data.nso.curated_industry_indicators`
+-- MAGIC    - IIP and industrial production metrics
+-- MAGIC 
+-- MAGIC 6. `market_data.nso.curated_retail_tourism_indicators`
+-- MAGIC    - retail sales, services, tourism
+-- MAGIC 
+-- MAGIC 7. `market_data.nso.curated_investment_enterprise_indicators`
+-- MAGIC    - FDI, public/private investment, business registration
+-- MAGIC 
+-- MAGIC Use separate curated views/tables by domain when it improves dashboard clarity, but keep `curated_indicators_long` as the canonical unified analytical table.
+-- MAGIC 
+-- MAGIC ## Mapping / Dimension Tables
+-- MAGIC 
+-- MAGIC Create mapping tables, preserved across reruns:
+-- MAGIC 
+-- MAGIC ### `dim_indicator`
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.dim_indicator (
+-- MAGIC   indicator_name_raw STRING,
+-- MAGIC   indicator_name_normalized STRING,
+-- MAGIC   indicator_name_en STRING,
+-- MAGIC   indicator_domain STRING,
+-- MAGIC   indicator_subdomain STRING,
+-- MAGIC   preferred_unit STRING,
+-- MAGIC   preferred_scale STRING,
+-- MAGIC   mapping_method STRING,
+-- MAGIC   confidence_score DOUBLE,
+-- MAGIC   needs_review BOOLEAN,
+-- MAGIC   created_at TIMESTAMP,
+-- MAGIC   updated_at TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ### `dim_geography`
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.dim_geography (
+-- MAGIC   geography_raw STRING,
+-- MAGIC   geography_normalized STRING,
+-- MAGIC   geography_en STRING,
+-- MAGIC   geography_type STRING, -- country, province, region, national, other
+-- MAGIC   iso2 STRING,
+-- MAGIC   iso3 STRING,
+-- MAGIC   province_code STRING,
+-- MAGIC   mapping_method STRING,
+-- MAGIC   confidence_score DOUBLE,
+-- MAGIC   needs_review BOOLEAN,
+-- MAGIC   created_at TIMESTAMP,
+-- MAGIC   updated_at TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ### `dim_unit`
+-- MAGIC 
+-- MAGIC ```sql
+-- MAGIC CREATE TABLE IF NOT EXISTS market_data.nso.dim_unit (
+-- MAGIC   unit_raw STRING,
+-- MAGIC   unit_normalized STRING,
+-- MAGIC   unit_en STRING,
+-- MAGIC   scale STRING,
+-- MAGIC   multiplier_to_base DOUBLE,
+-- MAGIC   mapping_method STRING,
+-- MAGIC   confidence_score DOUBLE,
+-- MAGIC   needs_review BOOLEAN,
+-- MAGIC   created_at TIMESTAMP,
+-- MAGIC   updated_at TIMESTAMP
+-- MAGIC ) USING DELTA;
+-- MAGIC ```
+-- MAGIC 
+-- MAGIC ## Extraction Strategy
+-- MAGIC 
+-- MAGIC ### Workbook extraction
+-- MAGIC 
+-- MAGIC 1. Enumerate all sheets.
+-- MAGIC 2. Preserve all cells in `extracted_cells_long`.
+-- MAGIC 3. Detect table blocks by:
+-- MAGIC    - non-empty cell clusters
+-- MAGIC    - title rows above dense tables
+-- MAGIC    - header rows with repeated period/unit/indicator patterns
+-- MAGIC 4. Classify table blocks using deterministic rules first.
+-- MAGIC 5. Normalize table blocks into `extracted_indicators_long` where confidence is high.
+-- MAGIC 6. Leave low-confidence cells available in raw long format and flag tables for review.
+-- MAGIC 
+-- MAGIC ### Narrative extraction
+-- MAGIC 
+-- MAGIC For `.docx`/HTML text:
+-- MAGIC 
+-- MAGIC - keep full cleaned text
+-- MAGIC - optionally extract headline indicators later with a separate narrative parser
+-- MAGIC - every narrative-extracted indicator must include its `extraction_method` and `needs_review = TRUE` unless validated against workbook tables
+-- MAGIC 
+-- MAGIC ## Quality Checks
+-- MAGIC 
+-- MAGIC Each run should produce a summary:
+-- MAGIC 
+-- MAGIC - reports discovered by year/sub_category
+-- MAGIC - attachments downloaded by type/status
+-- MAGIC - workbooks parsed by status
+-- MAGIC - sheets extracted count
+-- MAGIC - table inventory by `indicator_domain`
+-- MAGIC - normalized indicator rows by `indicator_domain`, `period_type`, `sub_category`
+-- MAGIC - rows needing review
+-- MAGIC 
+-- MAGIC Recommended quality tables/views:
+-- MAGIC 
+-- MAGIC - `market_data.nso.qc_report_coverage`
+-- MAGIC - `market_data.nso.qc_attachment_status`
+-- MAGIC - `market_data.nso.qc_extraction_review_queue`
+-- MAGIC 
+-- MAGIC Important validation rules:
+-- MAGIC 
+-- MAGIC - Every report page should have at least one attachment or preserved HTML.
+-- MAGIC - Every `.xlsx` attachment should have at least one parsed sheet.
+-- MAGIC - Every extracted indicator row should have source lineage.
+-- MAGIC - Numeric parsing should preserve raw text and unit.
+-- MAGIC - Do not silently coerce percentages and absolute values into the same metric.
+-- MAGIC 
+-- MAGIC ## Rerun / Idempotency Rules
+-- MAGIC 
+-- MAGIC - Use deterministic IDs.
+-- MAGIC - Use Delta `MERGE` for metadata tables.
+-- MAGIC - Keep processing log statuses: `pending`, `success`, `failed`, `skipped`.
+-- MAGIC - Do not redownload unchanged files unless content hash or attachment URL changes.
+-- MAGIC - Do not overwrite mapping dimensions except when inserting new raw values.
+-- MAGIC - Allow targeted reprocessing by `report_year`, `report_id`, `attachment_id`, or failed status.
+-- MAGIC 
+-- MAGIC ## Implementation Order
+-- MAGIC 
+-- MAGIC 1. Create schema and volume: `market_data.nso`, `download_docs`.
+-- MAGIC 2. Build `00_specs_nso_socioeconomic_reports` notebook.
+-- MAGIC 3. Build `1_Crawl_Download_Documents`:
+-- MAGIC    - crawl all pages
+-- MAGIC    - classify report-level `sub_category`
+-- MAGIC    - collect attachments
+-- MAGIC    - download `.xlsx` and `.docx`
+-- MAGIC 4. Build `2_Parse_Documents`:
+-- MAGIC    - parse workbooks and narrative docs
+-- MAGIC 5. Build `3_Extract_Tables`:
+-- MAGIC    - raw cell long table
+-- MAGIC    - table inventory with `indicator_domain`
+-- MAGIC    - normalized indicator long table
+-- MAGIC 6. Build `4_Curated`:
+-- MAGIC    - mapping dimensions
+-- MAGIC    - curated long table
+-- MAGIC    - selected BI views by domain
+-- MAGIC 7. Add QC views and run summaries.
+-- MAGIC 
+-- MAGIC ## Open Questions / Decisions
+-- MAGIC 
+-- MAGIC - Whether to treat NSO as `market_data.nso` or put under a broader `market_data.gso` schema. Recommendation: use `market_data.nso` because the current website domain and user wording are NSO.
+-- MAGIC - Whether to parse narrative `.docx` deeply in v1. Recommendation: preserve and parse text, but prioritize `.xlsx` structured tables first.
+-- MAGIC - Whether to build wide curated dashboard tables immediately. Recommendation: only after the recurring indicator names are stable in `curated_indicators_long`.
+-- MAGIC 

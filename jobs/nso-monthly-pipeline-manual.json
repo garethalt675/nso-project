@@ -1,0 +1,90 @@
+{
+  "email_notifications": {
+    "no_alert_for_skipped_runs": false,
+    "on_failure": [
+      "tuckeyhue@gmail.com"
+    ]
+  },
+  "environments": [
+    {
+      "environment_key": "Default",
+      "spec": {
+        "environment_version": "5"
+      }
+    }
+  ],
+  "format": "MULTI_TASK",
+  "max_concurrent_runs": 1,
+  "name": "NSO Monthly Pipeline (manual)",
+  "performance_target": "PERFORMANCE_OPTIMIZED",
+  "queue": {
+    "enabled": true
+  },
+  "tasks": [
+    {
+      "disabled": false,
+      "email_notifications": {},
+      "environment_key": "Default",
+      "notebook_task": {
+        "notebook_path": "/Users/tuckeyhue@gmail.com/Market Research/1. Data ETL/3. NSO/1_Crawl_Download_Documents",
+        "source": "WORKSPACE"
+      },
+      "run_if": "ALL_SUCCESS",
+      "task_key": "crawl_download",
+      "timeout_seconds": 0
+    },
+    {
+      "depends_on": [
+        {
+          "task_key": "crawl_download"
+        }
+      ],
+      "disabled": false,
+      "email_notifications": {},
+      "environment_key": "Default",
+      "notebook_task": {
+        "notebook_path": "/Users/tuckeyhue@gmail.com/Market Research/1. Data ETL/3. NSO/2_Parse_Documents",
+        "source": "WORKSPACE"
+      },
+      "run_if": "ALL_SUCCESS",
+      "task_key": "parse_documents",
+      "timeout_seconds": 0
+    },
+    {
+      "depends_on": [
+        {
+          "task_key": "parse_documents"
+        }
+      ],
+      "disabled": false,
+      "email_notifications": {},
+      "environment_key": "Default",
+      "notebook_task": {
+        "notebook_path": "/Users/tuckeyhue@gmail.com/Market Research/1. Data ETL/3. NSO/3_Extract_Tables",
+        "source": "WORKSPACE"
+      },
+      "run_if": "ALL_SUCCESS",
+      "task_key": "extract_tables",
+      "timeout_seconds": 0
+    },
+    {
+      "depends_on": [
+        {
+          "task_key": "extract_tables"
+        }
+      ],
+      "disabled": false,
+      "email_notifications": {},
+      "environment_key": "Default",
+      "notebook_task": {
+        "notebook_path": "/Users/tuckeyhue@gmail.com/Market Research/1. Data ETL/3. NSO/4_Curated",
+        "source": "WORKSPACE"
+      },
+      "run_if": "ALL_SUCCESS",
+      "task_key": "curated",
+      "timeout_seconds": 0
+    }
+  ],
+  "timeout_seconds": 0,
+  "webhook_notifications": {}
+}

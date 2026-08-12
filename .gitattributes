@@ -1,0 +1,10 @@
+# Notebook sources are uploaded to Databricks byte-for-byte by
+# scripts/databricks_sync.py, so keep LF endings in the working tree on every
+# platform. Without this, a Windows checkout would push CRLF into the workspace.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.xlsx binary
+*.xls binary
