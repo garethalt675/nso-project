@@ -254,158 +254,183 @@ def norm(value):
     return re.sub(r"\s+", " ", strip_accents(clean_cell(value)).lower()).strip()
 
 # Known artifacts from legacy Vietnamese encodings. Keep corrections exact.
+#
+# Rules are (artifact, replacement) literals rather than regexes, restricted to letters,
+# spaces, commas and semicolons. That restriction is what lets one list feed all three
+# consumers -- the Python pass over incoming cells, the Spark SQL backfill, and the predicate
+# that selects rows to repair -- since a literal with no metacharacters, quotes or backslashes
+# needs no escaping anywhere. Anchors are added on the way out. A rule written outside the
+# vocabulary is rejected below instead of turning into SQL that quietly matches nothing.
 VIETNAMESE_ASCII_CORRECTIONS = [
-    (r"\bHang hoo khoc\b", "Hang hoa khac"),
-    (r"\bhang hoo khoc\b", "hang hoa khac"),
-    (r"\bHang hua\b", "Hang hoa"),
-    (r"\bhang hua\b", "hang hoa"),
-    (r"\bhua\b", "hoa"),
-    (r"\bHua\b", "Hoa"),
-    (r"\bhoo\b", "hoa"),
-    (r"\bHoo\b", "Hoa"),
-    (r"\bkhoc\b", "khac"),
-    (r"\bKhoc\b", "Khac"),
-    (r"\bcho thuo\b", "cho thue"),
-    (r"\bCho thuo\b", "Cho thue"),
-    (r"\bmay muc\b", "may moc"),
-    (r"\bMay muc\b", "May moc"),
-    (r"\bkho boi\b", "kho bai"),
-    (r"\bKho boi\b", "Kho bai"),
-    (r"\bcu lion quan\b", "co lien quan"),
-    (r"\bCu lion quan\b", "Co lien quan"),
-    (r"\bcu lien quan\b", "co lien quan"),
-    (r"\bCu lien quan\b", "Co lien quan"),
-    (r"\blion quan\b", "lien quan"),
-    (r"\bLion quan\b", "Lien quan"),
-    (r"\bcoc loai\b", "cac loai"),
-    (r"\bCoc loai\b", "Cac loai"),
-    (r"\bcoc dich vu\b", "cac dich vu"),
-    (r"\bCoc dich vu\b", "Cac dich vu"),
-    (r"\bcoc san pham\b", "cac san pham"),
-    (r"\bCoc san pham\b", "Cac san pham"),
-    (r"\bcoc thiet bi\b", "cac thiet bi"),
-    (r"\bCoc thiet bi\b", "Cac thiet bi"),
-    (r"\bBon buun\b", "Ban buon"),
-    (r"\bbon buun\b", "ban buon"),
-    (r"\bbon le\b", "ban le"),
-    (r"\bBon le\b", "Ban le"),
-    (r"\bu tu\b", "o to"),
-    (r"\bU tu\b", "O to"),
-    (r"\bmu tu\b", "mo to"),
-    (r"\bMu tu\b", "Mo to"),
-    (r"\bcu dong\b", "co dong"),
-    (r"\bCu dong\b", "Co dong"),
-    (r"\bNung, lom nghiep\b", "Nong, lam nghiep"),
-    (r"\bnung, lom nghiep\b", "nong, lam nghiep"),
-    (r"\bNung nghiep\b", "Nong nghiep"),
-    (r"\bnung nghiep\b", "nong nghiep"),
-    (r"\bLom nghiep\b", "Lam nghiep"),
-    (r"\blom nghiep\b", "lam nghiep"),
-    (r"\bphEm\b", "pham"),
-    (r"\bthop\b", "thep"),
-    (r"\btiou\b", "tieu"),
-    (r"\bNghon\b", "Nghin"),
-    (r"\bnghon\b", "nghin"),
-    (r"\btonh\b", "tinh"),
-    (r"\bTonh\b", "Tinh"),
-    (r"\btoch\b", "tich"),
-    (r"\bToch\b", "Tich"),
-    (r"\bmoy\b", "may"),
-    (r"\bMoy\b", "May"),
-    (r"\bTri gio\b", "Tri gia"),
-    (r"\btri gio\b", "tri gia"),
-    (r"\bTriOu\b", "Trieu"),
-    (r"\bTRiOu\b", "Trieu"),
-    (r"\btriOu\b", "trieu"),
-    (r"\bGioo duc va dao tao\b", "Giao duc va dao tao"),
-    (r"\bgiai tro\b", "giai tri"),
-    (r"\bBon buun; bon le; sua chua u tu, xe may\b", "Ban buon; ban le; sua chua o to, xe may"),
-    (r"\bDich vu viec lam; du lich; cho thuo may muc thiet bi, do dung va coc dich vu ho tro khoc\b", "Dich vu viec lam; du lich; cho thue may moc thiet bi, do dung va cac dich vu ho tro khac"),
-    (r"\bHua chat\b", "Hoa chat"),
-    (r"\bKho dot hua long\b", "Kho dot hoa long"),
-    (r"\bThanh Hua\b", "Thanh Hoa"),
-    (r"\bKim loai thuong khoc\b", "Kim loai thuong khac"),
-    (r"\bGiay coc loai\b", "Giay cac loai"),
-    (r"\bCung cap nuoc; hoat dong quan ly va xu ly roc thai, nuoc thai\b", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
-    (r"\bSan xuat da va coc san pham cu lion quan\b", "San xuat da va cac san pham co lien quan"),
-    (r"\bSan xuat san pham thuoc lo\b", "San xuat san pham thuoc la"),
-    (r"\bSan xuat thuoc, hoo duoc va duoc lieu\b", "San xuat thuoc, hoa duoc va duoc lieu"),
-    (r"\bHoat dong thu gom, xu ly va tieu huy roc thai; toi che phe lieu\b", "Hoat dong thu gom, xu ly va tieu huy rac thai; tai che phe lieu"),
-    (r"\bBonh Duong\b", "Binh Duong"),
-    (r"\bThoi Bonh\b", "Thai Binh"),
-    (r"\bBonh Dinh\b", "Binh Dinh"),
-    (r"\bGioo\b", "Giao"),
-    (r"\bgioo\b", "giao"),
-    (r"\bthuoc lo\b", "thuoc la"),
-    (r"\bThuoc lo\b", "Thuoc la"),
-    (r"\broc thai\b", "rac thai"),
-    (r"\bRoc thai\b", "Rac thai"),
-    (r"\btoi che\b", "tai che"),
-    (r"\bcu lion quan\b", "co lien quan"),
-    (r"\bcoc dich vu lion quan\b", "cac dich vu lien quan"),
-    (r"\bDich vu kho boi va cac dich vu lien quan den ho tro van tai\b", "Dich vu kho bai va cac dich vu lien quan den ho tro van tai"),
-    (r"\bBon buun va bon le; sua chua u tu, mu tu, xe may va xe cu dong co khoc\b", "Ban buon va ban le; sua chua o to, mo to, xe may va xe co dong co khac"),
-    (r"\bCung cap nuoc, hoat dong quan ly va xu ly rac thai, nuoc thai\b", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
-    (r"\bNuoc tu nhion khai thoc\b", "Nuoc tu nhien khai thac"),
-    (r"\bLom nghiep va dich vu co lien quan\b", "Lam nghiep va dich vu co lien quan"),
-    (r"\bNung nghiep va dich vu co lien quan\b", "Nong nghiep va dich vu co lien quan"),
-    (r"\bDet, trang phuc, da va coc san pham co lien quan\b", "Det, trang phuc, da va cac san pham co lien quan"),
-    (r"\bDa va coc san pham co lien quan\b", "Da va cac san pham co lien quan"),
-    (r"\bHoat dog thu gom\b", "Hoat dong thu gom"),
-    (r"\bVan hoo\b", "Van hoa"),
+    ("Hang hoo khoc", "Hang hoa khac"),
+    ("hang hoo khoc", "hang hoa khac"),
+    ("Hang hua", "Hang hoa"),
+    ("hang hua", "hang hoa"),
+    ("hua", "hoa"),
+    ("Hua", "Hoa"),
+    ("hoo", "hoa"),
+    ("Hoo", "Hoa"),
+    ("khoc", "khac"),
+    ("Khoc", "Khac"),
+    ("cho thuo", "cho thue"),
+    ("Cho thuo", "Cho thue"),
+    ("may muc", "may moc"),
+    ("May muc", "May moc"),
+    ("kho boi", "kho bai"),
+    ("Kho boi", "Kho bai"),
+    ("cu lion quan", "co lien quan"),
+    ("Cu lion quan", "Co lien quan"),
+    ("cu lien quan", "co lien quan"),
+    ("Cu lien quan", "Co lien quan"),
+    ("lion quan", "lien quan"),
+    ("Lion quan", "Lien quan"),
+    ("coc loai", "cac loai"),
+    ("Coc loai", "Cac loai"),
+    ("coc dich vu", "cac dich vu"),
+    ("Coc dich vu", "Cac dich vu"),
+    ("coc san pham", "cac san pham"),
+    ("Coc san pham", "Cac san pham"),
+    ("coc thiet bi", "cac thiet bi"),
+    ("Coc thiet bi", "Cac thiet bi"),
+    ("Bon buun", "Ban buon"),
+    ("bon buun", "ban buon"),
+    ("bon le", "ban le"),
+    ("Bon le", "Ban le"),
+    ("u tu", "o to"),
+    ("U tu", "O to"),
+    ("mu tu", "mo to"),
+    ("Mu tu", "Mo to"),
+    ("cu dong", "co dong"),
+    ("Cu dong", "Co dong"),
+    ("Nung, lom nghiep", "Nong, lam nghiep"),
+    ("nung, lom nghiep", "nong, lam nghiep"),
+    ("Nung nghiep", "Nong nghiep"),
+    ("nung nghiep", "nong nghiep"),
+    ("Lom nghiep", "Lam nghiep"),
+    ("lom nghiep", "lam nghiep"),
+    ("phEm", "pham"),
+    ("thop", "thep"),
+    ("tiou", "tieu"),
+    ("Nghon", "Nghin"),
+    ("nghon", "nghin"),
+    ("tonh", "tinh"),
+    ("Tonh", "Tinh"),
+    ("toch", "tich"),
+    ("Toch", "Tich"),
+    ("moy", "may"),
+    ("Moy", "May"),
+    ("Tri gio", "Tri gia"),
+    ("tri gio", "tri gia"),
+    ("TriOu", "Trieu"),
+    ("TRiOu", "Trieu"),
+    ("triOu", "trieu"),
+    ("Gioo duc va dao tao", "Giao duc va dao tao"),
+    ("giai tro", "giai tri"),
+    ("Bon buun; bon le; sua chua u tu, xe may", "Ban buon; ban le; sua chua o to, xe may"),
+    ("Dich vu viec lam; du lich; cho thuo may muc thiet bi, do dung va coc dich vu ho tro khoc", "Dich vu viec lam; du lich; cho thue may moc thiet bi, do dung va cac dich vu ho tro khac"),
+    ("Hua chat", "Hoa chat"),
+    ("Kho dot hua long", "Kho dot hoa long"),
+    ("Thanh Hua", "Thanh Hoa"),
+    ("Kim loai thuong khoc", "Kim loai thuong khac"),
+    ("Giay coc loai", "Giay cac loai"),
+    ("Cung cap nuoc; hoat dong quan ly va xu ly roc thai, nuoc thai", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
+    ("San xuat da va coc san pham cu lion quan", "San xuat da va cac san pham co lien quan"),
+    ("San xuat san pham thuoc lo", "San xuat san pham thuoc la"),
+    ("San xuat thuoc, hoo duoc va duoc lieu", "San xuat thuoc, hoa duoc va duoc lieu"),
+    ("Hoat dong thu gom, xu ly va tieu huy roc thai; toi che phe lieu", "Hoat dong thu gom, xu ly va tieu huy rac thai; tai che phe lieu"),
+    ("Bonh Duong", "Binh Duong"),
+    ("Thoi Bonh", "Thai Binh"),
+    ("Bonh Dinh", "Binh Dinh"),
+    ("Gioo", "Giao"),
+    ("gioo", "giao"),
+    ("thuoc lo", "thuoc la"),
+    ("Thuoc lo", "Thuoc la"),
+    ("roc thai", "rac thai"),
+    ("Roc thai", "Rac thai"),
+    ("toi che", "tai che"),
+    ("cu lion quan", "co lien quan"),
+    ("coc dich vu lion quan", "cac dich vu lien quan"),
+    ("Dich vu kho boi va cac dich vu lien quan den ho tro van tai", "Dich vu kho bai va cac dich vu lien quan den ho tro van tai"),
+    ("Bon buun va bon le; sua chua u tu, mu tu, xe may va xe cu dong co khoc", "Ban buon va ban le; sua chua o to, mo to, xe may va xe co dong co khac"),
+    ("Cung cap nuoc, hoat dong quan ly va xu ly rac thai, nuoc thai", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
+    ("Nuoc tu nhion khai thoc", "Nuoc tu nhien khai thac"),
+    ("Lom nghiep va dich vu co lien quan", "Lam nghiep va dich vu co lien quan"),
+    ("Nung nghiep va dich vu co lien quan", "Nong nghiep va dich vu co lien quan"),
+    ("Det, trang phuc, da va coc san pham co lien quan", "Det, trang phuc, da va cac san pham co lien quan"),
+    ("Da va coc san pham co lien quan", "Da va cac san pham co lien quan"),
+    ("Hoat dog thu gom", "Hoat dong thu gom"),
+    ("Van hoo", "Van hoa"),
 
-    (r"\bBonh keo\b", "Banh keo"),
-    (r"\bBonh quon\b", "Banh quan"),
-    (r"\bbonh\b", "banh"),
-    (r"\bBonh\b", "Banh"),
-    (r"\bCung nghiep\b", "Cong nghiep"),
-    (r"\bcung nghiep\b", "cong nghiep"),
-    (r"\bcung nghe\b", "cong nghe"),
-    (r"\bCung nghe\b", "Cong nghe"),
-    (r"\bchuyon mun\b", "chuyen mon"),
-    (r"\bChuyon mun\b", "Chuyen mon"),
-    (r"\bchuyon\b", "chuyen"),
-    (r"\bChuyon\b", "Chuyen"),
-    (r"\bhang khung\b", "hang khong"),
-    (r"\bHang khung\b", "Hang khong"),
-    (r"\bkhung kho\b", "khong khi"),
-    (r"\bKhung kho\b", "Khong khi"),
-    (r"\bnuoc nung\b", "nuoc nong"),
-    (r"\bNuoc nung\b", "Nuoc nong"),
-    (r"\bChi so gio\b", "Chi so gia"),
-    (r"\bchi so gio\b", "chi so gia"),
-    (r"\bhanh chonh\b", "hanh chinh"),
-    (r"\bHanh chonh\b", "Hanh chinh"),
-    (r"\bgia donh\b", "gia dinh"),
-    (r"\bGia donh\b", "Gia dinh"),
-    (r"\bcoc cung viec\b", "cac cong viec"),
-    (r"\bCoc cung viec\b", "Cac cong viec"),
+    ("Bonh keo", "Banh keo"),
+    ("Bonh quon", "Banh quan"),
+    ("bonh", "banh"),
+    ("Bonh", "Banh"),
+    ("Cung nghiep", "Cong nghiep"),
+    ("cung nghiep", "cong nghiep"),
+    ("cung nghe", "cong nghe"),
+    ("Cung nghe", "Cong nghe"),
+    ("chuyon mun", "chuyen mon"),
+    ("Chuyon mun", "Chuyen mon"),
+    ("chuyon", "chuyen"),
+    ("Chuyon", "Chuyen"),
+    ("hang khung", "hang khong"),
+    ("Hang khung", "Hang khong"),
+    ("khung kho", "khong khi"),
+    ("Khung kho", "Khong khi"),
+    ("nuoc nung", "nuoc nong"),
+    ("Nuoc nung", "Nuoc nong"),
+    ("Chi so gio", "Chi so gia"),
+    ("chi so gio", "chi so gia"),
+    ("hanh chonh", "hanh chinh"),
+    ("Hanh chonh", "Hanh chinh"),
+    ("gia donh", "gia dinh"),
+    ("Gia donh", "Gia dinh"),
+    ("coc cung viec", "cac cong viec"),
+    ("Coc cung viec", "Cac cong viec"),
 
-    (r"\blam thuo\b", "lam thue"),
-    (r"\bLam thuo\b", "Lam thue"),
-    (r"\bcoc ho\b", "cac ho"),
-    (r"\bCoc ho\b", "Cac ho"),
-    (r"\bkhoong san\b", "khoang san"),
-    (r"\bKhoong san\b", "Khoang san"),
-    (r"\bKho dot\b", "Khi dot"),
-    (r"\bkho dot\b", "khi dot"),
+    ("lam thuo", "lam thue"),
+    ("Lam thuo", "Lam thue"),
+    ("coc ho", "cac ho"),
+    ("Coc ho", "Cac ho"),
+    ("khoong san", "khoang san"),
+    ("Khoong san", "Khoang san"),
+    ("Kho dot", "Khi dot"),
+    ("kho dot", "khi dot"),
 
-    (r"\bKhai khoong\b", "Khai khoang"),
-    (r"\bkhai khoong\b", "khai khoang"),
-    (r"\bGiay dop\b", "Giay dep"),
-    (r"\bgiay dop\b", "giay dep"),
-    (r"\bGiau dep\b", "Giay dep"),
-    (r"\bgiau dep\b", "giay dep"),
-    (r"\bNguyon\b", "Nguyen"),
-    (r"\bnguyon\b", "nguyen"),
-    (r"\bmu nun\b", "mu non"),
-    (r"\bMu nun\b", "Mu non"),
+    ("Khai khoong", "Khai khoang"),
+    ("khai khoong", "khai khoang"),
+    ("Giay dop", "Giay dep"),
+    ("giay dop", "giay dep"),
+    ("Giau dep", "Giay dep"),
+    ("giau dep", "giay dep"),
+    ("Nguyon", "Nguyen"),
+    ("nguyon", "nguyen"),
+    ("mu nun", "mu non"),
+    ("Mu nun", "Mu non"),
 ]
+
+ASCII_RULE_VOCABULARY = re.compile(r"^[A-Za-z][A-Za-z ,;]*$")
+
+def check_ascii_corrections():
+    """Fail fast if a rule cannot be rendered as both a Python regex and a SQL literal."""
+    bad = []
+    for artifact, replacement in VIETNAMESE_ASCII_CORRECTIONS:
+        for role, value in (("artifact", artifact), ("replacement", replacement)):
+            if not ASCII_RULE_VOCABULARY.match(value):
+                bad.append(f"{role} {value!r}: letters, spaces, commas and semicolons only")
+    if bad:
+        raise AssertionError("VIETNAMESE_ASCII_CORRECTIONS rejected:\n  " + "\n  ".join(bad))
+    print(f"ASCII corrections self-test passed ({len(VIETNAMESE_ASCII_CORRECTIONS)} rules)")
+
+check_ascii_corrections()
+
+ASCII_CORRECTION_PATTERNS = [(re.compile(rf"\b{artifact}\b"), replacement)
+                             for artifact, replacement in VIETNAMESE_ASCII_CORRECTIONS]
 
 def fix_vietnamese_ascii_artifacts(value):
     text = clean_cell(value)
-    for pattern, replacement in VIETNAMESE_ASCII_CORRECTIONS:
-        text = re.sub(pattern, replacement, text)
+    for pattern, replacement in ASCII_CORRECTION_PATTERNS:
+        text = pattern.sub(replacement, text)
     return text
 
 # A cell counts as a value only if it is entirely numeric. Partial matching lets header
@@ -1721,161 +1746,21 @@ if processed_sheet_report_ids:
 # old Vietnamese font/codepage conversion. Correct only evidence-backed ASCII
 # artifacts in label/metric/unit fields; do not fuzzy-match or translate source
 # labels. Future rows are corrected in parse_cells() above.
-VIETNAMESE_ASCII_SQL_CORRECTIONS = [
-    (r"\\bHang hoo khoc\\b", "Hang hoa khac"),
-    (r"\\bhang hoo khoc\\b", "hang hoa khac"),
-    (r"\\bHang hua\\b", "Hang hoa"),
-    (r"\\bhang hua\\b", "hang hoa"),
-    (r"\\bhua\\b", "hoa"),
-    (r"\\bHua\\b", "Hoa"),
-    (r"\\bhoo\\b", "hoa"),
-    (r"\\bHoo\\b", "Hoa"),
-    (r"\\bkhoc\\b", "khac"),
-    (r"\\bKhoc\\b", "Khac"),
-    (r"\\bcho thuo\\b", "cho thue"),
-    (r"\\bCho thuo\\b", "Cho thue"),
-    (r"\\bmay muc\\b", "may moc"),
-    (r"\\bMay muc\\b", "May moc"),
-    (r"\\bkho boi\\b", "kho bai"),
-    (r"\\bKho boi\\b", "Kho bai"),
-    (r"\\bcu lion quan\\b", "co lien quan"),
-    (r"\\bCu lion quan\\b", "Co lien quan"),
-    (r"\\bcu lien quan\\b", "co lien quan"),
-    (r"\\bCu lien quan\\b", "Co lien quan"),
-    (r"\\blion quan\\b", "lien quan"),
-    (r"\\bLion quan\\b", "Lien quan"),
-    (r"\\bcoc loai\\b", "cac loai"),
-    (r"\\bCoc loai\\b", "Cac loai"),
-    (r"\\bcoc dich vu\\b", "cac dich vu"),
-    (r"\\bCoc dich vu\\b", "Cac dich vu"),
-    (r"\\bcoc san pham\\b", "cac san pham"),
-    (r"\\bCoc san pham\\b", "Cac san pham"),
-    (r"\\bcoc thiet bi\\b", "cac thiet bi"),
-    (r"\\bCoc thiet bi\\b", "Cac thiet bi"),
-    (r"\\bBon buun\\b", "Ban buon"),
-    (r"\\bbon buun\\b", "ban buon"),
-    (r"\\bbon le\\b", "ban le"),
-    (r"\\bBon le\\b", "Ban le"),
-    (r"\\bu tu\\b", "o to"),
-    (r"\\bU tu\\b", "O to"),
-    (r"\\bmu tu\\b", "mo to"),
-    (r"\\bMu tu\\b", "Mo to"),
-    (r"\\bcu dong\\b", "co dong"),
-    (r"\\bCu dong\\b", "Co dong"),
-    (r"\\bNung, lom nghiep\\b", "Nong, lam nghiep"),
-    (r"\\bnung, lom nghiep\\b", "nong, lam nghiep"),
-    (r"\\bNung nghiep\\b", "Nong nghiep"),
-    (r"\\bnung nghiep\\b", "nong nghiep"),
-    (r"\\bLom nghiep\\b", "Lam nghiep"),
-    (r"\\blom nghiep\\b", "lam nghiep"),
-    (r"\\bphEm\\b", "pham"),
-    (r"\\bthop\\b", "thep"),
-    (r"\\btiou\\b", "tieu"),
-    (r"\\bNghon\\b", "Nghin"),
-    (r"\\bnghon\\b", "nghin"),
-    (r"\\btonh\\b", "tinh"),
-    (r"\\bTonh\\b", "Tinh"),
-    (r"\\btoch\\b", "tich"),
-    (r"\\bToch\\b", "Tich"),
-    (r"\\bmoy\\b", "may"),
-    (r"\\bMoy\\b", "May"),
-    (r"\\bTri gio\\b", "Tri gia"),
-    (r"\\btri gio\\b", "tri gia"),
-    (r"\\bTriOu\\b", "Trieu"),
-    (r"\\bTRiOu\\b", "Trieu"),
-    (r"\\btriOu\\b", "trieu"),
-    (r"\\bGioo duc va dao tao\\b", "Giao duc va dao tao"),
-    (r"\\bgiai tro\\b", "giai tri"),
-    (r"\\bBon buun; bon le; sua chua u tu, xe may\\b", "Ban buon; ban le; sua chua o to, xe may"),
-    (r"\\bDich vu viec lam; du lich; cho thuo may muc thiet bi, do dung va coc dich vu ho tro khoc\\b", "Dich vu viec lam; du lich; cho thue may moc thiet bi, do dung va cac dich vu ho tro khac"),
-    (r"\\bHua chat\\b", "Hoa chat"),
-    (r"\\bKho dot hua long\\b", "Kho dot hoa long"),
-    (r"\\bThanh Hua\\b", "Thanh Hoa"),
-    (r"\\bKim loai thuong khoc\\b", "Kim loai thuong khac"),
-    (r"\\bGiay coc loai\\b", "Giay cac loai"),
-    (r"\\bCung cap nuoc; hoat dong quan ly va xu ly roc thai, nuoc thai\\b", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
-    (r"\\bSan xuat da va coc san pham cu lion quan\\b", "San xuat da va cac san pham co lien quan"),
-    (r"\\bSan xuat san pham thuoc lo\\b", "San xuat san pham thuoc la"),
-    (r"\\bSan xuat thuoc, hoo duoc va duoc lieu\\b", "San xuat thuoc, hoa duoc va duoc lieu"),
-    (r"\\bHoat dong thu gom, xu ly va tieu huy roc thai; toi che phe lieu\\b", "Hoat dong thu gom, xu ly va tieu huy rac thai; tai che phe lieu"),
-    (r"\\bBonh Duong\\b", "Binh Duong"),
-    (r"\\bThoi Bonh\\b", "Thai Binh"),
-    (r"\\bBonh Dinh\\b", "Binh Dinh"),
-    (r"\\bGioo\\b", "Giao"),
-    (r"\\bgioo\\b", "giao"),
-    (r"\\bthuoc lo\\b", "thuoc la"),
-    (r"\\bThuoc lo\\b", "Thuoc la"),
-    (r"\\broc thai\\b", "rac thai"),
-    (r"\\bRoc thai\\b", "Rac thai"),
-    (r"\\btoi che\\b", "tai che"),
-    (r"\\bcu lion quan\\b", "co lien quan"),
-    (r"\\bcoc dich vu lion quan\\b", "cac dich vu lien quan"),
-    (r"\\bDich vu kho boi va cac dich vu lien quan den ho tro van tai\\b", "Dich vu kho bai va cac dich vu lien quan den ho tro van tai"),
-    (r"\\bBon buun va bon le; sua chua u tu, mu tu, xe may va xe cu dong co khoc\\b", "Ban buon va ban le; sua chua o to, mo to, xe may va xe co dong co khac"),
-    (r"\\bCung cap nuoc, hoat dong quan ly va xu ly rac thai, nuoc thai\\b", "Cung cap nuoc; hoat dong quan ly va xu ly rac thai, nuoc thai"),
-    (r"\\bNuoc tu nhion khai thoc\\b", "Nuoc tu nhien khai thac"),
-    (r"\\bLom nghiep va dich vu co lien quan\\b", "Lam nghiep va dich vu co lien quan"),
-    (r"\\bNung nghiep va dich vu co lien quan\\b", "Nong nghiep va dich vu co lien quan"),
-    (r"\\bDet, trang phuc, da va coc san pham co lien quan\\b", "Det, trang phuc, da va cac san pham co lien quan"),
-    (r"\\bDa va coc san pham co lien quan\\b", "Da va cac san pham co lien quan"),
-    (r"\\bHoat dog thu gom\\b", "Hoat dong thu gom"),
-    (r"\\bVan hoo\\b", "Van hoa"),
-
-    (r"\bBonh keo\b", "Banh keo"),
-    (r"\bBonh quon\b", "Banh quan"),
-    (r"\bbonh\b", "banh"),
-    (r"\bBonh\b", "Banh"),
-    (r"\bCung nghiep\b", "Cong nghiep"),
-    (r"\bcung nghiep\b", "cong nghiep"),
-    (r"\bcung nghe\b", "cong nghe"),
-    (r"\bCung nghe\b", "Cong nghe"),
-    (r"\bchuyon mun\b", "chuyen mon"),
-    (r"\bChuyon mun\b", "Chuyen mon"),
-    (r"\bchuyon\b", "chuyen"),
-    (r"\bChuyon\b", "Chuyen"),
-    (r"\bhang khung\b", "hang khong"),
-    (r"\bHang khung\b", "Hang khong"),
-    (r"\bkhung kho\b", "khong khi"),
-    (r"\bKhung kho\b", "Khong khi"),
-    (r"\bnuoc nung\b", "nuoc nong"),
-    (r"\bNuoc nung\b", "Nuoc nong"),
-    (r"\bChi so gio\b", "Chi so gia"),
-    (r"\bchi so gio\b", "chi so gia"),
-    (r"\bhanh chonh\b", "hanh chinh"),
-    (r"\bHanh chonh\b", "Hanh chinh"),
-    (r"\bgia donh\b", "gia dinh"),
-    (r"\bGia donh\b", "Gia dinh"),
-    (r"\bcoc cung viec\b", "cac cong viec"),
-    (r"\bCoc cung viec\b", "Cac cong viec"),
-
-    (r"\blam thuo\b", "lam thue"),
-    (r"\bLam thuo\b", "Lam thue"),
-    (r"\bcoc ho\b", "cac ho"),
-    (r"\bCoc ho\b", "Cac ho"),
-    (r"\bkhoong san\b", "khoang san"),
-    (r"\bKhoong san\b", "Khoang san"),
-    (r"\bKho dot\b", "Khi dot"),
-    (r"\bkho dot\b", "khi dot"),
-
-    (r"\bKhai khoong\b", "Khai khoang"),
-    (r"\bkhai khoong\b", "khai khoang"),
-    (r"\bGiay dop\b", "Giay dep"),
-    (r"\bgiay dop\b", "giay dep"),
-    (r"\bGiau dep\b", "Giay dep"),
-    (r"\bgiau dep\b", "giay dep"),
-    (r"\bNguyon\b", "Nguyen"),
-    (r"\bnguyon\b", "nguyen"),
-    (r"\bmu nun\b", "mu non"),
-    (r"\bMu nun\b", "Mu non"),
-]
-
+#
+# Word boundaries reach Spark SQL as \\b, not \b: the pattern sits inside a SQL string
+# literal, which consumes one level of escaping before the regex engine ever sees it. A
+# single \b arrives as a backspace character (U+0008) and the rule then matches nothing --
+# silently, since a correction that never fires looks exactly like one with nothing to fix.
 def vietnamese_ascii_sql_expr(column_name):
     expr = column_name
-    for pattern, replacement in VIETNAMESE_ASCII_SQL_CORRECTIONS:
-        expr = f"regexp_replace({expr}, '{pattern}', '{replacement}')"
+    for artifact, replacement in VIETNAMESE_ASCII_CORRECTIONS:
+        expr = rf"regexp_replace({expr}, '\\b{artifact}\\b', '{replacement}')"
     return expr
 
-_suspicious_ascii_predicate = "RLIKE '(Hang hoo khoc|hang hoo khoc|Hang hua|hang hua|hua|Hua|hoo|Hoo|khoc|Khoc|phEm|thop|tiou|Nghon|nghon|tonh|Tonh|toch|Toch|moy|Moy|Tri gio|tri gio|TriOu|TRiOu|triOu|Gioo|gioo|giai tro|Bon buun|cho thuo|Cho thuo|may muc|May muc|kho boi|Kho boi|cu lion quan|Cu lion quan|cu lien quan|Cu lien quan|lion quan|Lion quan|coc loai|Coc loai|coc dich vu|Coc dich vu|coc san pham|Coc san pham|coc thiet bi|Coc thiet bi|Bon buun|bon buun|bon le|Bon le|u tu|U tu|mu tu|Mu tu|cu dong|Cu dong|Hua chat|hua long|Thanh Hua|Kim loai thuong khoc|Giay coc loai|roc thai|thuoc lo|Thuoc lo|hoo duoc|toi che|Bonh Duong|Thoi Bonh|Bonh Dinh|Nuoc tu nhion|Lom nghiep|lom nghiep|Nung nghiep|nung nghiep|Nung, lom nghiep|nung, lom nghiep|Hoat dog|Van hoo|Bonh|bonh|Cung nghiep|cung nghiep|cung nghe|Cung nghe|chuyon|Chuyon|hang khung|Hang khung|khung kho|Khung kho|nuoc nung|Nuoc nung|Chi so gio|chi so gio|hanh chonh|Hanh chonh|gia donh|Gia donh|coc cung viec|Coc cung viec|lam thuo|Lam thuo|coc ho|Coc ho|khoong san|Khoong san|Kho dot|kho dot|Khai khoong|khai khoong|Giay dop|giay dop|Giau dep|giau dep|Nguyon|nguyon|mu nun|Mu nun)'"
+# Unanchored on purpose: this only preselects rows worth rewriting, and a boundary check here
+# would cost more than the no-op replacements it saves.
+_suspicious_ascii_predicate = "RLIKE '({})'".format(
+    "|".join(dict.fromkeys(artifact for artifact, _ in VIETNAMESE_ASCII_CORRECTIONS)))
 
 spark.sql(f"""
 UPDATE {LONG_TABLE}
@@ -1933,16 +1818,16 @@ display(spark.sql(f"""
 SELECT field, value, COUNT(*) AS rows
 FROM (
   SELECT 'extracted_indicator' AS field, indicator_name_raw AS value FROM {LONG_TABLE}
-  WHERE indicator_name_raw RLIKE '(phEm|thop|tiou|Nghon|nghon|tonh|Tonh|toch|Toch|moy|Moy|Tri gio|tri gio|TriOu|Gioo duc|giai tro|Bon buun|cho thuo|coc dich vu|khoc|Hua chat|hua long|Thanh Hua|Kim loai thuong khoc|Giay coc loai|roc thai|cu lion quan|thuoc lo|hoo duoc|toi che|Bonh Duong|Thoi Bonh|Bonh Dinh)'
+  WHERE indicator_name_raw {_suspicious_ascii_predicate}
   UNION ALL
   SELECT 'extracted_metric' AS field, metric_name_raw AS value FROM {LONG_TABLE}
-  WHERE metric_name_raw RLIKE '(phEm|thop|tiou|Nghon|nghon|tonh|Tonh|toch|Toch|moy|Moy|Tri gio|tri gio|TriOu|Gioo duc|giai tro|Bon buun|cho thuo|coc dich vu|khoc|Hua chat|hua long|Thanh Hua|Kim loai thuong khoc|Giay coc loai|roc thai|cu lion quan|thuoc lo|hoo duoc|toi che|Bonh Duong|Thoi Bonh|Bonh Dinh)'
+  WHERE metric_name_raw {_suspicious_ascii_predicate}
   UNION ALL
   SELECT 'trade_row_label' AS field, row_label_raw AS value FROM {CATALOG}.{SCHEMA}.trade_prices_report
-  WHERE row_label_raw RLIKE '(phEm|thop|tiou|Nghon|nghon|tonh|Tonh|toch|Toch|moy|Moy|Tri gio|tri gio|TriOu|Gioo duc|giai tro|Bon buun|cho thuo|coc dich vu|khoc|Hua chat|hua long|Thanh Hua|Kim loai thuong khoc|Giay coc loai|roc thai|cu lion quan|thuoc lo|hoo duoc|toi che|Bonh Duong|Thoi Bonh|Bonh Dinh)'
+  WHERE row_label_raw {_suspicious_ascii_predicate}
   UNION ALL
   SELECT 'trade_metric' AS field, metric_name_raw AS value FROM {CATALOG}.{SCHEMA}.trade_prices_report
-  WHERE metric_name_raw RLIKE '(phEm|thop|tiou|Nghon|nghon|tonh|Tonh|toch|Toch|moy|Moy|Tri gio|tri gio|TriOu|Gioo duc|giai tro|Bon buun|cho thuo|coc dich vu|khoc|Hua chat|hua long|Thanh Hua|Kim loai thuong khoc|Giay coc loai|roc thai|cu lion quan|thuoc lo|hoo duoc|toi che|Bonh Duong|Thoi Bonh|Bonh Dinh)'
+  WHERE metric_name_raw {_suspicious_ascii_predicate}
 ) q
 GROUP BY field, value
 ORDER BY rows DESC
@@ -1954,44 +1839,55 @@ LIMIT 100
 # DBTITLE 1,Write sheet report/status grain
 sheet_report_rows = []
 sheet_log_rows = []
+
+# The report/period fields below are constant within a sheet, so the sheet's first observation
+# supplies all of them. One pass collects that row alongside the count; looking each field up by
+# scanning indicator_rows instead meant seven walks of the whole run's observations per sheet.
 obs_count_by_sheet = {}
+first_obs_by_sheet = {}
 for row in indicator_rows:
-    obs_count_by_sheet[row["sheet_report_id"]] = obs_count_by_sheet.get(row["sheet_report_id"], 0) + 1
+    sheet_report_id = row["sheet_report_id"]
+    obs_count_by_sheet[sheet_report_id] = obs_count_by_sheet.get(sheet_report_id, 0) + 1
+    first_obs_by_sheet.setdefault(sheet_report_id, row)
 
 for tr in table_rows:
+    sheet_report_id = tr["sheet_report_id"]
+    obs = first_obs_by_sheet.get(sheet_report_id) or {}
+    observation_count = obs_count_by_sheet.get(sheet_report_id, 0)
+    extraction_status = "success" if observation_count > 0 else "empty"
     sheet_report_rows.append({
-        "sheet_report_id": tr["sheet_report_id"],
+        "sheet_report_id": sheet_report_id,
         "report_id": tr["report_id"],
         "attachment_id": tr["attachment_id"],
         "sheet_index": tr["sheet_index"],
         "sheet_name_raw": tr["sheet_name_raw"],
         "sheet_name_normalized": norm(tr["sheet_name_raw"]),
-        "source_filename": next((r.get("source_filename") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "report_year": next((r.get("report_year") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "report_month": next((r.get("report_month") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "report_quarter": next((r.get("report_quarter") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "period_type": next((r.get("period_type") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "period_start_date": next((r.get("period_start_date") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
-        "period_end_date": next((r.get("period_end_date") for r in indicator_rows if r.get("sheet_report_id") == tr["sheet_report_id"]), None),
+        "source_filename": obs.get("source_filename"),
+        "report_year": obs.get("report_year"),
+        "report_month": obs.get("report_month"),
+        "report_quarter": obs.get("report_quarter"),
+        "period_type": obs.get("period_type"),
+        "period_start_date": obs.get("period_start_date"),
+        "period_end_date": obs.get("period_end_date"),
         "indicator_domain": tr["indicator_domain"],
         "indicator_subdomain": tr["indicator_subdomain"],
         "table_title_raw": tr["table_title_raw"],
         "parse_status": "success",
-        "extraction_status": "success" if obs_count_by_sheet.get(tr["sheet_report_id"], 0) > 0 else "empty",
-        "observation_count": int(obs_count_by_sheet.get(tr["sheet_report_id"], 0)),
+        "extraction_status": extraction_status,
+        "observation_count": int(observation_count),
         "needs_review": bool(tr["needs_review"]),
         "warnings_json": None,
         "created_at": now,
         "updated_at": now,
     })
     sheet_log_rows.append({
-        "sheet_report_id": tr["sheet_report_id"],
+        "sheet_report_id": sheet_report_id,
         "report_id": tr["report_id"],
         "attachment_id": tr["attachment_id"],
         "sheet_index": tr["sheet_index"],
         "parse_status": "success",
-        "extraction_status": "success" if obs_count_by_sheet.get(tr["sheet_report_id"], 0) > 0 else "empty",
-        "rows_extracted": int(obs_count_by_sheet.get(tr["sheet_report_id"], 0)),
+        "extraction_status": extraction_status,
+        "rows_extracted": int(observation_count),
         "warnings_json": None,
         "error_message": None,
         "run_timestamp": now,
