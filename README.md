@@ -18,7 +18,7 @@ report, attachment, sheet, row, and column.
 notebooks/   Databricks notebooks for the pipeline and QA helpers
 scripts/     Local tooling for workspace sync, job export, SQL checks, and tests
 jobs/        Databricks workflow definitions
-docs/        Architecture notes, quality assessment, remediation plan, and runbooks
+docs/        Quality assessment, remediation plan, test results, and SQL checks
 ```
 
 ## Pipeline
@@ -42,7 +42,6 @@ misclassified sheets, plausible values under the wrong metric, legacy encoding
 issues, period parsing mistakes, and ambiguous row labels. The repository keeps
 the relevant audits and open findings in version control:
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes the pipeline design.
 - [`docs/DATA_QUALITY_ASSESSMENT.md`](docs/DATA_QUALITY_ASSESSMENT.md) summarizes the current quality state.
 - [`docs/REMEDIATION_PLAN.md`](docs/REMEDIATION_PLAN.md) tracks known gaps and next fixes.
 - [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md) records the per-domain regression suite results.

@@ -19,7 +19,7 @@ import sys
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dbsql import HOST, HEADERS, WAREHOUSE  # noqa: E402
+from dbsql import WAREHOUSE, api_headers, api_host  # noqa: E402
 
 TABLE = "market_data.nso.curated_indicators_long"
 DASHBOARD_NAME = "NSO Data Output Review"
@@ -365,7 +365,7 @@ dashboard = {"datasets": datasets, "pages": pages}
 
 
 def find_existing():
-    r = requests.get(f"{HOST}/api/2.0/lakeview/dashboards", headers=HEADERS,
+    r = requests.get(f"{api_host()}/api/2.0/lakeview/dashboards", headers=api_headers(),
                      params={"page_size": 100}, timeout=60)
     r.raise_for_status()
     for d in r.json().get("dashboards", []):
@@ -391,24 +391,24 @@ def main():
     if existing:
         did = existing["dashboard_id"]
         # The list endpoint omits etag; re-read before PATCH.
-        cur = requests.get(f"{HOST}/api/2.0/lakeview/dashboards/{did}", headers=HEADERS, timeout=60)
+        cur = requests.get(f"{api_host()}/api/2.0/lakeview/dashboards/{did}", headers=api_headers(), timeout=60)
         cur.raise_for_status()
         etag = cur.json().get("etag", "")
-        r = requests.patch(f"{HOST}/api/2.0/lakeview/dashboards/{did}", headers=HEADERS,
+        r = requests.patch(f"{api_host()}/api/2.0/lakeview/dashboards/{did}", headers=api_headers(),
                            json={**body, "etag": etag}, timeout=120)
         action = "updated"
     else:
-        r = requests.post(f"{HOST}/api/2.0/lakeview/dashboards", headers=HEADERS,
+        r = requests.post(f"{api_host()}/api/2.0/lakeview/dashboards", headers=api_headers(),
                           json={**body, "parent_path": PARENT_PATH}, timeout=120)
         action = "created"
     if r.status_code >= 300:
         print(f"FAILED ({r.status_code}): {r.text[:1200]}")
         return 1
     did = r.json()["dashboard_id"]
-    pub = requests.post(f"{HOST}/api/2.0/lakeview/dashboards/{did}/published", headers=HEADERS,
+    pub = requests.post(f"{api_host()}/api/2.0/lakeview/dashboards/{did}/published", headers=api_headers(),
                         json={"embed_credentials": False, "warehouse_id": WAREHOUSE}, timeout=120)
     print(f"{action}: {did} | publish {pub.status_code}")
-    print(f"{HOST}/dashboardsv3/{did}/published")
+    print(f"{api_host()}/dashboardsv3/{did}/published")
     return 0
 
 
