@@ -1,0 +1,46 @@
+# Lint configuration only -- this project is not a Python package.
+#
+# The notebooks under notebooks/ are uploaded to Databricks byte-for-byte by
+# scripts/databricks_sync.py, so NEVER run an autoformatter (`ruff format`,
+# `black`) against them: a reformat is a full workspace re-push and a
+# re-verification of the running pipeline, and it would rewrite the annotated
+# SQL that carries this repository's design rationale.
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+# Excluded pending two unrelated fixes; linting it now would report 99 findings
+# that are artefacts of its layout rather than its logic.
+#
+#  1. It is blank-line-doubled (611 of 1,180 lines blank) and carries a single
+#     `# COMMAND ----------` cell marker against 8-16 in every other notebook.
+#     Verified 2026-08-13: the Databricks workspace copy has the same shape, so
+#     this is how the notebook actually runs -- a `pull` will not fix it, and
+#     normalising it means editing and pushing the live notebook.
+#  2. The repo copy is stale against the workspace by ~14 content lines
+#     (a missing `from pyspark.sql import functions as F`, and the expanded
+#     comments describing the 2026-05-17 silent-ingestion-stop fix).
+#
+# Resolve the drift with `scripts/databricks_sync.py diff -v`, then remove this
+# entry and re-baseline.
+exclude = ["notebooks/1_Crawl_Download_Documents.py"]
+
+# Injected by the Databricks runtime into every notebook; not importable, and
+# absent at lint time. Declaring them here resolves the undefined-name reports
+# properly instead of blanket-ignoring F821 and going blind to real typos.
+builtins = ["spark", "dbutils", "display", "sc", "sqlContext"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "RET", "ARG"]
+ignore = [
+    # Most over-length lines are inside SQL string literals, where wrapping
+    # would change the statement rather than the formatting. Worth revisiting
+    # if the larger SQL blocks ever move into .sql files.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 2_Parse_Documents.py installs xlrd/openpyxl at runtime before importing them,
+# so its imports legitimately sit below module-level statements.
+"notebooks/*.py" = ["E402"]

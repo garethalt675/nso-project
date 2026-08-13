@@ -19,10 +19,16 @@ import subprocess
 import sys
 import unicodedata
 import zipfile
-from datetime import datetime, date
+from datetime import date, datetime
 from decimal import Decimal
 
-from pyspark.sql.types import *
+from pyspark.sql.types import (
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 CATALOG = "market_data"
 SCHEMA = "nso"
@@ -54,6 +60,7 @@ ensure_package("xlrd", "xlrd==2.0.1")
 import openpyxl
 import xlrd
 from openpyxl.utils import get_column_letter
+
 
 # Some legacy NSO .xls files carry invalid UTF-16 in workbook metadata (SUPBOOK external-reference
 # names), which makes xlrd's strict decode raise before any cell is read. Fall back to

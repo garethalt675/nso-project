@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Load the non-Spark functions from the Step 3 notebook for local tests."""
 import ast
 import hashlib

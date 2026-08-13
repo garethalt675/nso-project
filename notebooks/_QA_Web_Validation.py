@@ -1,6 +1,7 @@
 # Databricks notebook source
 import json
 
+
 def rows(sql):
     return [r.asDict(recursive=True) for r in spark.sql(sql).collect()]
 

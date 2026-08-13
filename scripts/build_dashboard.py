@@ -19,7 +19,7 @@ import sys
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dbsql import HOST, HEADERS, WAREHOUSE  # noqa: E402
+from dbsql import HEADERS, HOST, WAREHOUSE  # noqa: E402
 
 TABLE = "market_data.nso.curated_indicators_long"
 DASHBOARD_NAME = "NSO Data Output Review"
@@ -46,7 +46,7 @@ def slug(domain: str) -> str:
 
 
 def ds(name: str, display: str, sql: str) -> dict:
-    return {"name": name, "displayName": display, "queryLines": [l + "\n" for l in sql.strip().splitlines()]}
+    return {"name": name, "displayName": display, "queryLines": [line + "\n" for line in sql.strip().splitlines()]}
 
 
 def q(dataset: str, fields: list[tuple[str, str]], *, disaggregated=False, filters=None, orders=None) -> dict:
@@ -64,7 +64,7 @@ def q(dataset: str, fields: list[tuple[str, str]], *, disaggregated=False, filte
 
 def text(name: str, lines: list[str], x, y, w, h) -> dict:
     return {
-        "widget": {"name": name, "multilineTextboxSpec": {"lines": [l + "\n" for l in lines]}},
+        "widget": {"name": name, "multilineTextboxSpec": {"lines": [line + "\n" for line in lines]}},
         "position": {"x": x, "y": y, "width": w, "height": h},
     }
 

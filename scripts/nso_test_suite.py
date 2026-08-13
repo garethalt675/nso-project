@@ -342,7 +342,9 @@ def run_domain(domain: str, checks: list[Check]):
     select = ",\n  ".join(f"({ch.expr}) AS {ch.key}" for ch in checks)
     sql = f"SELECT\n  {select}\nFROM {TABLE}\nWHERE indicator_domain = '{domain}'"
     cols, rows = dbsql.run(sql, timeout=300)
-    raw = dict(zip(cols, rows[0])) if rows else {}
+    # strict: a column/value length mismatch means the aggregate SELECT and the check list have
+    # drifted apart, which would otherwise silently drop checks off the end.
+    raw = dict(zip(cols, rows[0], strict=True)) if rows else {}
     results = []
     for ch in checks:
         v = raw.get(ch.key)

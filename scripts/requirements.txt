@@ -2,3 +2,7 @@
 # need nothing from here.
 databricks-sdk>=0.120.0
 requests>=2.31.0
+
+# Lint only, matching .github/workflows/lint.yml. Config is in pyproject.toml.
+# Run `ruff check .` -- never `ruff format`, see the note in pyproject.toml.
+ruff>=0.15

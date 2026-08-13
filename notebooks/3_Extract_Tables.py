@@ -18,7 +18,16 @@ import re
 import unicodedata
 from datetime import datetime
 
-from pyspark.sql.types import *
+from pyspark.sql.types import (
+    BooleanType,
+    DateType,
+    DoubleType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 CATALOG = "market_data"
 SCHEMA = "nso"
@@ -242,8 +251,7 @@ def md5_16(value):
     return hashlib.md5(str(value).encode("utf-8")).hexdigest()[:16]
 
 def clean_cell(value):
-    text = re.sub(r"\s+", " ", str(value or "").replace("\u00a0", " ")).strip()
-    return text
+    return re.sub(r"\s+", " ", str(value or "").replace("\u00a0", " ")).strip()
 
 def strip_accents(text):
     text = unicodedata.normalize("NFD", str(text or ""))
@@ -899,7 +907,9 @@ def find_combined_unit_caption(*texts):
                 return f"{left}; {right}"
     return None
 
-def infer_context_units(rmap, header_rows, title, sheet_name, data_start):
+# Sheet-level unit context only. Per-column header units are inferred separately by
+# infer_header_unit(), which is what reads header_rows.
+def infer_context_units(rmap, title, sheet_name, data_start):
     explicit = infer_explicit_unit_row(rmap, data_start)
     top_text = " | ".join(" | ".join(row_values(rmap, r)) for r in sorted(rmap)[:8])
     combined = find_combined_unit_caption(title, sheet_name, top_text)
@@ -1118,7 +1128,9 @@ def split_combined_unit(unit_text, measure):
     parts = [p for p in parts if p]
     if len(parts) != 2:
         return None
-    is_currency = lambda p: bool(re.search(r"usd|vnd|\bdong\b", norm(p)))
+    def is_currency(p):
+        return bool(re.search(r"usd|vnd|\bdong\b", norm(p)))
+
     currency = [p for p in parts if is_currency(p)]
     other = [p for p in parts if not is_currency(p)]
     if len(currency) != 1 or len(other) != 1:
@@ -1256,8 +1268,12 @@ def row_indent(indent_map, r, label_col):
         return 0
     return int((indent_map.get(r) or {}).get(label_col, 0) or 0)
 
-def build_row_context(rmap, cols, data_start, strategy=None, indent_map=None):
+def build_row_context(rmap, cols, data_start, indent_map=None):
     """Resolve, per data row, its unit (following ditto marks) and its parent group label.
+
+    Grouping is deliberately independent of the sheet's dimension strategy: this decides WHICH
+    rows form a group, and route_dimensions_with_parent() decides which dimension the resulting
+    parent/child labels land in.
 
     Two independent signals, because NSO sheets use both:
 
@@ -1432,7 +1448,7 @@ for i, row in enumerate(parsed, start=1):
         label_rows = column_header_rows(rmap, header_rows)
         hmap = expand_header_spans(rmap, label_rows, d.get("merged_ranges_json"))
         title = infer_title(rmap, d.get("sheet_name_raw"))
-        context_units = infer_context_units(hmap, header_rows, title, d.get("sheet_name_raw"), data_start)
+        context_units = infer_context_units(hmap, title, d.get("sheet_name_raw"), data_start)
         sheet_rule = classify_sheet(d.get("sheet_name_raw"), title, rmap)
         domain = sheet_rule["domain"]
         subdomain = sheet_rule["subdomain"]
@@ -1491,8 +1507,7 @@ for i, row in enumerate(parsed, start=1):
         cols = sorted({c["column_index"] for c in cells})
         # Per-sheet row context: ditto-resolved units and parent/child grouping (from Excel
         # indent levels where present, falling back to unit-column ditto marks).
-        row_ctx = build_row_context(rmap, cols, data_start, sheet_rule["dimension_strategy"],
-                                    indent_map(cells))
+        row_ctx = build_row_context(rmap, cols, data_start, indent_map(cells))
         sheet_inserted = 0
         for r in sorted(x for x in rmap if x >= data_start):
             vals = rmap.get(r, {})
@@ -2082,7 +2097,7 @@ ORDER BY observations DESC
 """))
 
 summary_sql = []
-for domain, table_name in TOPIC_TABLES.items():
+for table_name in TOPIC_TABLES.values():
     summary_sql.append(f"SELECT '{table_name}' AS table_name, COUNT(*) AS rows FROM {CATALOG}.{SCHEMA}.{table_name}")
 
 display(spark.sql("\nUNION ALL\n".join(summary_sql) + "\nORDER BY rows DESC"))

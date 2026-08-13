@@ -13,6 +13,7 @@ import argparse
 import base64
 import difflib
 import os
+import pathlib
 import sys
 
 from databricks.sdk import WorkspaceClient
@@ -71,7 +72,7 @@ def cmd_pull(w, args):
         data = fetch(w, ws_path)
         local = os.path.join(NOTEBOOK_DIR, rel)
         os.makedirs(os.path.dirname(local), exist_ok=True)
-        old = open(local, "rb").read() if os.path.exists(local) else None
+        old = pathlib.Path(local).read_bytes() if os.path.exists(local) else None
         if old == data:
             continue
         if not args.dry_run:
@@ -90,10 +91,9 @@ def cmd_push(w, args):
         is_notebook = ext.lower() in EXT_TO_LANG
         ws_path = f"{WS_BASE}/" + (stem if is_notebook else rel).replace("\\", "/")
 
-        data = open(local, "rb").read().replace(BOM, b"")
-        if rel in remote:
-            if fetch(w, remote[rel]) == data:
-                continue
+        data = pathlib.Path(local).read_bytes().replace(BOM, b"")
+        if rel in remote and fetch(w, remote[rel]) == data:
+            continue
         if args.dry_run:
             print(f"  would upload  {rel}")
             changed += 1
@@ -127,7 +127,7 @@ def cmd_diff(w, args):
     differing = 0
     for rel in both:
         rdata = fetch(w, remote[rel]).decode("utf-8", "replace").splitlines()
-        ldata = open(local[rel], "rb").read().replace(BOM, b"").decode("utf-8", "replace").splitlines()
+        ldata = pathlib.Path(local[rel]).read_bytes().replace(BOM, b"").decode("utf-8", "replace").splitlines()
         if rdata == ldata:
             continue
         differing += 1

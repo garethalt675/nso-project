@@ -38,8 +38,10 @@ WS_BASE = os.environ.get(
 
 def resolve_auth():
     """Return (host, token)."""
-    host = os.environ.get("DATABRICKS_HOST") or os.environ.get("host")
-    token = os.environ.get("DATABRICKS_TOKEN") or os.environ.get("token")
+    # The lowercase `host`/`token` fallbacks are a documented compatibility path (see the module
+    # docstring), so the uncapitalized-env-var rule is silenced rather than the lookup changed.
+    host = os.environ.get("DATABRICKS_HOST") or os.environ.get("host")  # noqa: SIM112
+    token = os.environ.get("DATABRICKS_TOKEN") or os.environ.get("token")  # noqa: SIM112
     if not (host and token):
         cfg_path = pathlib.Path.home() / ".databrickscfg"
         if cfg_path.exists():
@@ -118,7 +120,7 @@ def show(sql, title=None, maxrows=60, width=48):
 
 def split_statements(text):
     """Split a .sql file into executable statements."""
-    body = "\n".join(l for l in text.splitlines() if not l.strip().startswith("--"))
+    body = "\n".join(line for line in text.splitlines() if not line.strip().startswith("--"))
     out = []
     for stmt in body.split(";"):
         stmt = stmt.strip()

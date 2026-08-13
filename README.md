@@ -90,11 +90,16 @@ The production workflow is `NSO Monthly Pipeline (manual)`, stored in
 
 ## Local Checks
 
-Run Python syntax checks:
+Run the linter and Python syntax checks:
 
 ```bash
+ruff check .
 python -m compileall -q scripts notebooks
 ```
+
+Both run in CI on every push and pull request (`.github/workflows/lint.yml`). Lint
+configuration is in `pyproject.toml`. Do not run `ruff format` or `black`: notebooks
+are uploaded to Databricks byte-for-byte, so a reformat is a full workspace re-push.
 
 Run the curated-layer regression suite against Databricks:
 
