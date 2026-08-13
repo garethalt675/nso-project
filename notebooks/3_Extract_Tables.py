@@ -348,7 +348,6 @@ VIETNAMESE_ASCII_CORRECTIONS = [
     ("roc thai", "rac thai"),
     ("Roc thai", "Rac thai"),
     ("toi che", "tai che"),
-    ("cu lion quan", "co lien quan"),
     ("coc dich vu lion quan", "cac dich vu lien quan"),
     ("Dich vu kho boi va cac dich vu lien quan den ho tro van tai", "Dich vu kho bai va cac dich vu lien quan den ho tro van tai"),
     ("Bon buun va bon le; sua chua u tu, mu tu, xe may va xe cu dong co khoc", "Ban buon va ban le; sua chua o to, mo to, xe may va xe co dong co khac"),
@@ -705,46 +704,9 @@ def infer_currency(text):
         return "VND"
     return None
 
-UNIT_KEYWORDS = [
-    "dong", "vnd", "usd", "ty dong", "trieu dong", "nghin dong", "nghin ty",
-    "trieu usd", "nghin usd", "tan", "nghin tan", "trieu tan", "kg", "ta",
-    "m2", "m3", "km", "km2", "ha", "nghin ha", "trieu ha",
-    "nguoi", "nghin nguoi", "trieu nguoi", "lao dong", "doanh nghiep",
-    "luot", "nghin luot", "trieu luot", "khach", "nghin khach", "trieu khach",
-    "chiec", "cai", "bo", "con", "nghin con", "trieu con",
-    "phan tram", "diem phan tram", "chi so", "index", "lan",
-]
-
-UNIT_PHRASE_PATTERNS = [
-    (r"nghin\s+ty\s+dong", "Nghìn tỷ đồng"),
-    (r"ty\s+dong", "Tỷ đồng"),
-    (r"trieu\s+dong", "Triệu đồng"),
-    (r"nghin\s+dong", "Nghìn đồng"),
-    (r"vnd|dong", "Đồng"),
-    (r"trieu\s+usd", "Triệu USD"),
-    (r"nghin\s+usd", "Nghìn USD"),
-    (r"usd", "USD"),
-    (r"trieu\s+tan", "Triệu tấn"),
-    (r"nghin\s+tan", "Nghìn tấn"),
-    (r"\btan\b", "Tấn"),
-    (r"trieu\s+ha", "Triệu ha"),
-    (r"nghin\s+ha", "Nghìn ha"),
-    (r"\bha\b", "Ha"),
-    (r"trieu\s+nguoi", "Triệu người"),
-    (r"nghin\s+nguoi", "Nghìn người"),
-    (r"\bnguoi\b", "Người"),
-    (r"trieu\s+luot", "Triệu lượt"),
-    (r"nghin\s+luot", "Nghìn lượt"),
-    (r"\bluot\b", "Lượt"),
-    (r"trieu\s+khach", "Triệu khách"),
-    (r"nghin\s+khach", "Nghìn khách"),
-    (r"doanh\s+nghiep", "Doanh nghiệp"),
-    (r"lao\s+dong", "Lao động"),
-    (r"phan\s+tram|%", "%"),
-]
-
-# Canonical ASCII-safe labels replace legacy literals that were vulnerable to
-# encoding corruption during old Databricks CLI imports.
+# Canonical ASCII-safe labels, rather than the accented Vietnamese ones these tables use:
+# the accented literals were vulnerable to encoding corruption during old Databricks CLI
+# imports, which is the defect the whole TCVN3 repair path exists to undo.
 UNIT_PHRASE_PATTERNS = [
     (r"nghin\s+ty\s+dong", "Thousand billion VND"),
     (r"ty\s+dong", "Billion VND"),
@@ -1118,7 +1080,10 @@ def split_combined_unit(unit_text, measure):
     parts = [p for p in parts if p]
     if len(parts) != 2:
         return None
-    is_currency = lambda p: bool(re.search(r"usd|vnd|\bdong\b", norm(p)))
+
+    def is_currency(part):
+        return bool(re.search(r"usd|vnd|\bdong\b", norm(part)))
+
     currency = [p for p in parts if is_currency(p)]
     other = [p for p in parts if not is_currency(p)]
     if len(currency) != 1 or len(other) != 1:
@@ -1246,7 +1211,7 @@ def split_row_label(vals, cols, unit_col):
             text_cols.append((c, v))
     if not text_cols:
         return None, None, []
-    first_col, first = text_cols[0]
+    first_col = text_cols[0][0]
     labels = [v for _, v in text_cols[:2] if v]
     return " | ".join(labels), first_col, text_cols
 
@@ -1256,7 +1221,7 @@ def row_indent(indent_map, r, label_col):
         return 0
     return int((indent_map.get(r) or {}).get(label_col, 0) or 0)
 
-def build_row_context(rmap, cols, data_start, strategy=None, indent_map=None):
+def build_row_context(rmap, cols, data_start, indent_map=None):
     """Resolve, per data row, its unit (following ditto marks) and its parent group label.
 
     Two independent signals, because NSO sheets use both:
@@ -1491,8 +1456,7 @@ for i, row in enumerate(parsed, start=1):
         cols = sorted({c["column_index"] for c in cells})
         # Per-sheet row context: ditto-resolved units and parent/child grouping (from Excel
         # indent levels where present, falling back to unit-column ditto marks).
-        row_ctx = build_row_context(rmap, cols, data_start, sheet_rule["dimension_strategy"],
-                                    indent_map(cells))
+        row_ctx = build_row_context(rmap, cols, data_start, indent_map(cells))
         sheet_inserted = 0
         for r in sorted(x for x in rmap if x >= data_start):
             vals = rmap.get(r, {})

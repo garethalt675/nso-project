@@ -36,8 +36,19 @@ WS_BASE = os.environ.get(
 )
 
 
+_AUTH = None
+
+
 def resolve_auth():
-    """Return (host, token)."""
+    """Return (host, token), resolved once and cached.
+
+    Deliberately lazy: importing this module must not fail for a caller that never
+    reaches the API (`--help`, `--dry-run`), and it must not read credentials it
+    does not need.
+    """
+    global _AUTH
+    if _AUTH is not None:
+        return _AUTH
     host = os.environ.get("DATABRICKS_HOST") or os.environ.get("host")
     token = os.environ.get("DATABRICKS_TOKEN") or os.environ.get("token")
     if not (host and token):
@@ -54,18 +65,23 @@ def resolve_auth():
             "No Databricks credentials. Set DATABRICKS_HOST/DATABRICKS_TOKEN, or lowercase "
             "host/token, or add a [DEFAULT] profile to ~/.databrickscfg."
         )
-    return host.rstrip("/"), token
+    _AUTH = (host.rstrip("/"), token)
+    return _AUTH
 
 
-HOST, TOKEN = resolve_auth()
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+def api_host():
+    return resolve_auth()[0]
+
+
+def api_headers():
+    return {"Authorization": f"Bearer {resolve_auth()[1]}", "Content-Type": "application/json"}
 
 
 def run(sql, catalog=CATALOG, schema=SCHEMA, warehouse=WAREHOUSE, wait="50s", timeout=120):
     """Execute one SQL statement and return (columns, rows)."""
     resp = requests.post(
-        f"{HOST}/api/2.0/sql/statements",
-        headers=HEADERS,
+        f"{api_host()}/api/2.0/sql/statements",
+        headers=api_headers(),
         json={
             "statement": sql,
             "warehouse_id": warehouse,
@@ -83,7 +99,7 @@ def run(sql, catalog=CATALOG, schema=SCHEMA, warehouse=WAREHOUSE, wait="50s", ti
     while payload["status"]["state"] in ("PENDING", "RUNNING"):
         time.sleep(3)
         payload = requests.get(
-            f"{HOST}/api/2.0/sql/statements/{statement_id}", headers=HEADERS, timeout=60
+            f"{api_host()}/api/2.0/sql/statements/{statement_id}", headers=api_headers(), timeout=60
         ).json()
     state = payload["status"]["state"]
     if state != "SUCCEEDED":
@@ -132,8 +148,8 @@ def export_notebook(name, fmt="SOURCE"):
     import base64
 
     resp = requests.get(
-        f"{HOST}/api/2.0/workspace/export",
-        headers=HEADERS,
+        f"{api_host()}/api/2.0/workspace/export",
+        headers=api_headers(),
         params={"path": f"{WS_BASE}/{name}", "format": fmt},
         timeout=120,
     )
@@ -147,8 +163,8 @@ def import_notebook(name, local_path, language="PYTHON"):
 
     data = pathlib.Path(local_path).read_bytes().replace(b"\xef\xbb\xbf", b"")
     resp = requests.post(
-        f"{HOST}/api/2.0/workspace/import",
-        headers=HEADERS,
+        f"{api_host()}/api/2.0/workspace/import",
+        headers=api_headers(),
         json={
             "path": f"{WS_BASE}/{name}",
             "format": "SOURCE",
@@ -173,7 +189,7 @@ def wait_for_run(run_id, poll=20, timeout=3600):
     deadline = time.time() + timeout
     while time.time() < deadline:
         d = requests.get(
-            f"{HOST}/api/2.1/jobs/runs/get", headers=HEADERS, params={"run_id": run_id}, timeout=60
+            f"{api_host()}/api/2.1/jobs/runs/get", headers=api_headers(), params={"run_id": run_id}, timeout=60
         ).json()
         state = d.get("state", {})
         life = state.get("life_cycle_state")

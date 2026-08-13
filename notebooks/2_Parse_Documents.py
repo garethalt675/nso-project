@@ -289,7 +289,6 @@ VIETNAMESE_ASCII_CORRECTIONS = [
     (r"\broc thai\b", "rac thai"),
     (r"\bRoc thai\b", "Rac thai"),
     (r"\btoi che\b", "tai che"),
-    (r"\bcu lion quan\b", "co lien quan"),
     (r"\bcoc dich vu lion quan\b", "cac dich vu lien quan"),
     (r"\bDich vu kho boi va cac dich vu lien quan den ho tro van tai\b", "Dich vu kho bai va cac dich vu lien quan den ho tro van tai"),
     (r"\bBon buun va bon le; sua chua u tu, mu tu, xe may va xe cu dong co khoc\b", "Ban buon va ban le; sua chua o to, mo to, xe may va xe co dong co khac"),

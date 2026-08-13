@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import operator
 import os
 import sys
 from dataclasses import dataclass
@@ -68,6 +69,15 @@ DOMAIN_NAME_PATTERN = {
 }
 
 
+COMPARATORS = {
+    "==": operator.eq,
+    "<=": operator.le,
+    ">=": operator.ge,
+    "<": operator.lt,
+    ">": operator.gt,
+}
+
+
 @dataclass
 class Check:
     """One SQL aggregate assertion for a domain."""
@@ -79,18 +89,11 @@ class Check:
     threshold: float
     severity: str = "error"
     note: str = ""
-    pct_of: str | None = None
 
     def passed(self, value) -> bool:
         if value is None:
             return False
-        return {
-            "==": lambda a, b: a == b,
-            "<=": lambda a, b: a <= b,
-            ">=": lambda a, b: a >= b,
-            "<": lambda a, b: a < b,
-            ">": lambda a, b: a > b,
-        }[self.op](value, self.threshold)
+        return COMPARATORS[self.op](value, self.threshold)
 
 
 def build_checks(domain: str) -> list[Check]:
