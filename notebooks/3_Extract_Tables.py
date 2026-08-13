@@ -704,16 +704,6 @@ def infer_currency(text):
         return "VND"
     return None
 
-UNIT_KEYWORDS = [
-    "dong", "vnd", "usd", "ty dong", "trieu dong", "nghin dong", "nghin ty",
-    "trieu usd", "nghin usd", "tan", "nghin tan", "trieu tan", "kg", "ta",
-    "m2", "m3", "km", "km2", "ha", "nghin ha", "trieu ha",
-    "nguoi", "nghin nguoi", "trieu nguoi", "lao dong", "doanh nghiep",
-    "luot", "nghin luot", "trieu luot", "khach", "nghin khach", "trieu khach",
-    "chiec", "cai", "bo", "con", "nghin con", "trieu con",
-    "phan tram", "diem phan tram", "chi so", "index", "lan",
-]
-
 # Canonical ASCII-safe labels, rather than the accented Vietnamese ones these tables use:
 # the accented literals were vulnerable to encoding corruption during old Databricks CLI
 # imports, which is the defect the whole TCVN3 repair path exists to undo.
